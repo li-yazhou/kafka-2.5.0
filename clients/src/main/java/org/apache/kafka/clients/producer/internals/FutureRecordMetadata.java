@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.utils.Time;
 
@@ -26,9 +27,11 @@ import java.util.concurrent.TimeoutException;
 
 /**
  * The future result of a record send
+ * TODO {@link KafkaProducer#send }的返回结果
  */
 public final class FutureRecordMetadata implements Future<RecordMetadata> {
 
+    // TODO 使用CountDownLatch(1)实现Future
     private final ProduceRequestResult result;
     private final long relativeOffset;
     private final long createTimestamp;

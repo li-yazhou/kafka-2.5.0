@@ -35,6 +35,7 @@ import org.apache.kafka.common.utils.Utils;
  */
 public class DefaultPartitioner implements Partitioner {
 
+    // TODO 粘性分区器，Kafka-2.4的新特性，可以减少网络IO次数
     private final StickyPartitionCache stickyPartitionCache = new StickyPartitionCache();
 
     public void configure(Map<String, ?> configs) {}

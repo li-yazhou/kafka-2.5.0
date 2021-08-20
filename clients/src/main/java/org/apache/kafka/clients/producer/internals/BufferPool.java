@@ -46,17 +46,21 @@ public class BufferPool {
 
     static final String WAIT_TIME_SENSOR_NAME = "bufferpool-wait-time";
 
-    private final long totalMemory;
-    private final int poolableSize;
-    private final ReentrantLock lock;
-    private final Deque<ByteBuffer> free;
-    private final Deque<Condition> waiters;
-    /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.  */
-    private long nonPooledAvailableMemory;
-    private final Metrics metrics;
-    private final Time time;
-    private final Sensor waitTime;
-    private boolean closed;
+        // TODO 总的内存大小，默认32MB
+        private final long totalMemory;
+        // TODO poolableSize 大小等于 batch.size，默认16KB
+        private final int poolableSize;
+        private final ReentrantLock lock;
+        // TODO 可被重复使用的内存单元
+        private final Deque<ByteBuffer> free;
+        // TODO 标识申请内存被阻塞的生产者所在的线程
+        private final Deque<Condition> waiters;
+        /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.  */
+        private long nonPooledAvailableMemory;
+        private final Metrics metrics;
+        private final Time time;
+        private final Sensor waitTime;
+        private boolean closed;
 
     /**
      * Create a new buffer pool
@@ -115,6 +119,8 @@ public class BufferPool {
 
         try {
             // check if we have a free buffer of the right size pooled
+            // TODO 申请内存空间大小为poolableSize，即batch.size，若free队列（已池化未使用的ByteBuffer空间）不为空，
+            // TODO 从队首返回一个可以复用的内存块
             if (size == poolableSize && !this.free.isEmpty())
                 return this.free.pollFirst();
 
@@ -124,6 +130,7 @@ public class BufferPool {
             if (this.nonPooledAvailableMemory + freeListSize >= size) {
                 // we have enough unallocated or pooled memory to immediately
                 // satisfy the request, but need to allocate the buffer
+                // TODO 不断释放free队列，直到nonPooledAvailableMemory >= size，确保nonPooledAvailableMemory有充足的空间可以分配
                 freeUp(size);
                 this.nonPooledAvailableMemory -= size;
             } else {
@@ -140,6 +147,8 @@ public class BufferPool {
                         long timeNs;
                         boolean waitingTimeElapsed;
                         try {
+                            // TODO 等待分配被唤醒，唤醒时机是有新的内存被放回free或者deallocate释放到非池化的内存空间
+                            // TODO 若等待超时，则消息生产失败
                             waitingTimeElapsed = !moreMemory.await(remainingTimeToBlockNs, TimeUnit.NANOSECONDS);
                         } finally {
                             long endWaitNs = time.nanoseconds();
@@ -158,6 +167,9 @@ public class BufferPool {
 
                         // check if we can satisfy this request from the free list,
                         // otherwise allocate memory
+                        // TODO 等待被唤醒后，若ProducerBatch完成发送，并释放了batch.size=16KB大小的空间到free队列中，
+                        // TODO 当前线程申请16KB空间，则直接返回可以复用的ByteBuffer
+                        // TODO 若释放空间大小不是batch.size，则返回给nonPooledAvailableMemory，当前线程从nonPooledAvailableMemory申请即可
                         if (accumulated == 0 && size == this.poolableSize && !this.free.isEmpty()) {
                             // just grab a buffer from the free list
                             buffer = this.free.pollFirst();
@@ -172,6 +184,7 @@ public class BufferPool {
                         }
                     }
                     // Don't reclaim memory on throwable since nothing was thrown
+                    // TODO 若发生异常，则已经”分配“的内存（但是无法被使用的内存）重新加入nonPooledAvailableMemory，加入到未池化的内存。
                     accumulated = 0;
                 } finally {
                     // When this loop was not able to successfully terminate don't loose available memory
@@ -191,9 +204,12 @@ public class BufferPool {
             }
         }
 
+        // TODO 释放足够多的空间后，在从 nonPooledAvailableMemory 分配空间
         if (buffer == null)
+            // 返回指定大小的ByteBuffer
             return safeAllocateByteBuffer(size);
         else
+            // TODO 从free队列中返回可以复用的ByteBuffer
             return buffer;
     }
 
@@ -203,6 +219,7 @@ public class BufferPool {
     }
 
     /**
+     * TODO 申请size大小的空间，若size == batch.size，则该内存可能会被复用
      * Allocate a buffer.  If buffer allocation fails (e.g. because of OOM) then return the size count back to
      * available memory and signal the next waiter if it exists.
      */
@@ -232,6 +249,7 @@ public class BufferPool {
     }
 
     /**
+     * TODO 将可以复用的内存转换为nonPooledAvailableMemory
      * Attempt to ensure we have at least the requested number of bytes of memory for allocation by deallocating pooled
      * buffers (if needed)
      */
@@ -241,6 +259,7 @@ public class BufferPool {
     }
 
     /**
+     * TODO ProducerBatch发送完成后，内存被回收，可能会被放到free或者释放到nonPooledAvailableMemory
      * Return buffers to the pool. If they are of the poolable size add them to the free list, otherwise just mark the
      * memory as free.
      *
@@ -275,6 +294,8 @@ public class BufferPool {
     public long availableMemory() {
         lock.lock();
         try {
+            // TODO 可用内存大小 = 未被池化内存大小 + 池化的内存大小
+            // TODO 总内存大小 = 可用内存大小 + 被 MemoryRecords引用的内存
             return this.nonPooledAvailableMemory + freeSize() * (long) this.poolableSize;
         } finally {
             lock.unlock();
@@ -299,6 +320,7 @@ public class BufferPool {
     }
 
     /**
+     * TODO 多线程中使用KafkaProducer可能出现，等待分配内存的线程数量
      * The number of threads blocked waiting on memory
      */
     public int queued() {

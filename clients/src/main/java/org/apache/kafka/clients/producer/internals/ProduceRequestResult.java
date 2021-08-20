@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
  * for the same partition in the request.
  */
 public class ProduceRequestResult {
-
+    // TODO 使用CountDownLatch(1)实现Future
     private final CountDownLatch latch = new CountDownLatch(1);
     private final TopicPartition topicPartition;
 

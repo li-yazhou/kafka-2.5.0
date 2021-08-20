@@ -100,7 +100,10 @@ final class InFlightRequests {
     public boolean canSendMore(String node) {
         Deque<NetworkClient.InFlightRequest> queue = requests.get(node);
         return queue == null || queue.isEmpty() ||
-               (queue.peekFirst().send.completed() && queue.size() < this.maxInFlightRequestsPerConnection);
+                // TODO 保证一个channel一次只能发送一个请求
+               (queue.peekFirst().send.completed()
+                // TODO 未响应的请求数量小于maxInFlightRequestsPerConnection，因此maxInFlightRequestsPerConnection=1时分区保证顺序
+               && queue.size() < this.maxInFlightRequestsPerConnection);
     }
 
     /**

@@ -880,6 +880,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             long nowMs = time.milliseconds();
             ClusterAndWaitTime clusterAndWaitTime;
             try {
+                // TODO 阻塞等待元数据
                 clusterAndWaitTime = waitOnMetadata(record.topic(), record.partition(), nowMs, maxBlockTimeMs);
             } catch (KafkaException e) {
                 if (metadata.isClosed())
@@ -924,11 +925,16 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             if (transactionManager != null && transactionManager.isTransactional()) {
                 transactionManager.failIfNotReadyForSend();
             }
+
+            // TODO 当abortForNewBatch=true时，accumulator.append() 发现无法的加入ProducerBatch，则直接返回
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey,
                     serializedValue, headers, interceptCallback, remainingWaitMs, true, nowMs);
-
+            // TODO abortForNewBatch=true，若accumulator.append()添加消息失败（ProducerBatch空间不足或者不存在），则不申请内存空间
+            // TODO 这处新增Kafka-2.4的一个重要的新特性，默认分区器是StickyPartitioner
+            // TODO StickyPartitioner需要感知ProducerBatch创建时机
             if (result.abortForNewBatch) {
                 int prevPartition = partition;
+                // TODO StickyPartitioner切换到下一个分区
                 partitioner.onNewBatch(record.topic(), cluster, prevPartition);
                 partition = partition(record, serializedKey, serializedValue, cluster);
                 tp = new TopicPartition(record.topic(), partition);
@@ -945,10 +951,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             if (transactionManager != null && transactionManager.isTransactional())
                 transactionManager.maybeAddPartitionToTransaction(tp);
 
+            // TODO 唤醒sender线程的条件，有ProducerBatch写满了或者当前分区的ProducerBatch个数大于1
+            // TODO 即当前分区存在已经写满的ProducerBatch
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
                 this.sender.wakeup();
             }
+            // TODO producerBatch请求完成后，调用done()方法，将会唤醒get()方法，由CountDownLatch实现
             return result.future;
             // handling exceptions and record the errors;
             // for API exceptions return them in the future,
@@ -1023,9 +1032,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 log.trace("Requesting metadata update for topic {}.", topic);
             }
             metadata.add(topic, nowMs + elapsed);
+            // TODO requestVersion ++，返回较小的updateVersion，当updateVersion >= requestVersion，则认为元数据更新成功
             int version = metadata.requestUpdateForTopic(topic);
             sender.wakeup();
             try {
+                // TODO 阻塞等待sender线程完成元数据更新，await方法一直处于等待状态，sender处理完元数据请求后，update更新updateVersion并唤醒该更新等待
                 metadata.awaitUpdate(version, remainingWaitMs);
             } catch (TimeoutException ex) {
                 // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs

@@ -182,6 +182,7 @@ public class Sender implements Runnable {
                 Iterator<ProducerBatch> iter = partitionInFlightBatches.iterator();
                 while (iter.hasNext()) {
                     ProducerBatch batch = iter.next();
+                    // TODO request.timeout.ms
                     if (batch.hasReachedDeliveryTimeout(accumulator.getDeliveryTimeoutMs(), now)) {
                         iter.remove();
                         // expireBatches is called in Sender.sendProducerData, before client.poll.
@@ -320,13 +321,16 @@ public class Sender implements Runnable {
         }
 
         long currentTimeMs = time.milliseconds();
+        // TODO 从缓存中取出ProducerBatch并以Node分组，若具备发送条件，则将消息暂存到Channel
         long pollTimeout = sendProducerData(currentTimeMs);
+        // TODO 发送请求并处理响应结果
         client.poll(pollTimeout, currentTimeMs);
     }
 
     private long sendProducerData(long now) {
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
+        // TODO 获取就绪的ProducerBatch，并将数据维度有Partition分组转换为Node分组
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
@@ -339,6 +343,7 @@ public class Sender implements Runnable {
 
             log.debug("Requesting metadata update due to unknown leader topics from the batched records: {}",
                 result.unknownLeaderTopics);
+            // TODO 标记元数据需要更新
             this.metadata.requestUpdate();
         }
 
@@ -347,6 +352,35 @@ public class Sender implements Runnable {
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
+            /**
+             * TODO 检查节点状态是否就绪，检查分区是否可以发送
+             *
+             *     public boolean ready(Node node, long now) {
+             *         if (node.isEmpty())
+             *             throw new IllegalArgumentException("Cannot connect to empty node " + node);
+             *         if (isReady(node, now))
+             *             return true;
+             *         if (connectionStates.canConnect(node.idString(), now))
+             *             // if we are interested in sending to a node and we don't have a connection to it,
+             *             initiate one
+             *             initiateConnect(node, now);
+             *         return false;
+             *     }
+             *
+             *     TODO isReady(node, now)
+             *     TODO !metadataUpdater.isUpdateDue(now) && connectionStates.isReady(node, now) && selector.isChannelReady(node) &&
+             *          inFlightRequests.canSendMore(node);
+             *
+             *     public boolean canSendMore(String node) {
+             *         Deque<NetworkClient.InFlightRequest> queue = requests.get(node);
+             *         return queue == null || queue.isEmpty() ||
+             *                 // TODO 保证一个channel一次只能发送一个请求
+             *                (queue.peekFirst().send.completed()
+             *                 // TODO 未响应的请求数量小于maxInFlightRequestsPerConnection
+             *                 // TODO 因此maxInFlightRequestsPerConnection=1时，分区保证顺序
+             *                && queue.size() < this.maxInFlightRequestsPerConnection);
+             *     }
+             */
             if (!this.client.ready(node, now)) {
                 iter.remove();
                 notReadyTimeout = Math.min(notReadyTimeout, this.client.pollDelayMs(node, now));
@@ -354,16 +388,21 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
+        // TODO accumulator.drain 获取可以发送的ProducerBatch，以Node分组
         Map<Integer, List<ProducerBatch>> batches = this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
+        // TODO 加入到inFlightBatches中的ProducerBatch，一定会执行完成处理过程，ProducerBatch执行完成后
+        // TODO 如果 guaranteeMessageOrder，则将该分区从muted静默Map中移除
         addToInflightBatches(batches);
         if (guaranteeMessageOrder) {
             // Mute all the partitions drained
+            // TODO 分区保序，若分区的ProducerBatch加入到inFlightRequest中时，则该TopicPartition需要加入到的muted静默Map中
             for (List<ProducerBatch> batchList : batches.values()) {
                 for (ProducerBatch batch : batchList)
                     this.accumulator.mutePartition(batch.topicPartition);
             }
         }
 
+        // TODO 超时过期请求的查询和处理，包括未发送和发送中过期的请求
         accumulator.resetNextBatchExpiryTime();
         List<ProducerBatch> expiredInflightBatches = getExpiredInflightBatches(now);
         List<ProducerBatch> expiredBatches = this.accumulator.expiredBatches(now);
@@ -401,6 +440,7 @@ public class Sender implements Runnable {
             // otherwise the select time will be the time difference between now and the metadata expiry time;
             pollTimeout = 0;
         }
+        // TODO 创建 ProducerRequest
         sendProduceRequests(batches, now);
         return pollTimeout;
     }
@@ -636,6 +676,7 @@ public class Sender implements Runnable {
 
         // Unmute the completed partition.
         if (guaranteeMessageOrder)
+            // TODO 分区保序的情况下，完成分区请求处理后，才将分区从muted静默Map中移除
             this.accumulator.unmutePartition(batch.topicPartition, throttleUntilTimeMs);
     }
 
@@ -740,8 +781,59 @@ public class Sender implements Runnable {
         }
         ProduceRequest.Builder requestBuilder = ProduceRequest.Builder.forMagic(minUsedMagic, acks, timeout,
                 produceRecordsByPartition, transactionalId);
+        // TODO 将 RequestCompletionHandler callback 封装到InFlightRequest中，并加入的InFlightRequests中，
+        // TODO callback中包括final类型的 Map<TopicPartition, ProducerBatch>。
+        // TODO Request与Response关联过程，poll()方法接收响应，解析响应的nodeId，根据该nodeId在inFlightRequests查找该节点最早的请求Request
+        // TODO 因此接收Response响应后，可以找到的CallBack，完成内存释放并执行用户自定义的回调方法
         RequestCompletionHandler callback = new RequestCompletionHandler() {
             public void onComplete(ClientResponse response) {
+                /**
+                 * TODO
+                 *
+                 *  ProduceResponse produceResponse = (ProduceResponse) response.responseBody();
+                 *  for (Map.Entry<TopicPartition, ProduceResponse.PartitionResponse> entry :
+                 *  produceResponse.responses().entrySet()) {
+                 *      TopicPartition tp = entry.getKey();
+                 *      ProduceResponse.PartitionResponse partResp = entry.getValue();
+                 *      ProducerBatch batch = batches.get(tp);
+                 *      completeBatch(batch, partResp, correlationId, now, receivedTimeMs + produceResponse.throttleTimeMs());
+                 *  }
+                 *
+                 *   // Unmute the completed partition.
+                 *   if (guaranteeMessageOrder)
+                 *      // TODO 分区保序的情况下，完成分区请求处理后，才将分区从muted静默Map中移除
+                 *      this.accumulator.unmutePartition(batch.topicPartition, throttleUntilTimeMs);
+                 *
+                 *   if (batch.done(response.baseOffset, response.logAppendTime, null)) {
+                 *      maybeRemoveAndDeallocateBatch(batch);
+                 *   }
+                 *
+                 * private void completeFutureAndFireCallbacks(long baseOffset, long logAppendTime,
+                 *    RuntimeException exception) {
+                 *      // Set the future before invoking the callbacks as we rely on its state for the
+                 *      `onCompletion` call
+                 *      produceFuture.set(baseOffset, logAppendTime, exception)
+                 *      // execute callbacks
+                 *      // TODO 每个ProducerRecord对应一个CallBack，每个ProducerBatch包括多个ProducerRecord
+                 *      for (Thunk thunk : thunks) {
+                 *          try {
+                 *              if (exception == null) {
+                 *                  RecordMetadata metadata = thunk.future.value();
+                 *                  if (thunk.callback != null)
+                 *                      thunk.callback.onCompletion(metadata, null);
+                 *              } else {
+                 *                  if (thunk.callback != null)
+                 *                      thunk.callback.onCompletion(null, exception);
+                 *              }
+                 *          } catch (Exception e) {
+                 *              log.error("Error executing user-provided callback on message for topic-partition '
+                 *              {}'", topicPartition, e);
+                 *          }
+                 *      // TODO send返回值的get方法被唤醒
+                 *      produceFuture.done();
+                 *  }
+                 * }
+                 */
                 handleProduceResponse(response, recordsByPartition, time.milliseconds());
             }
         };
@@ -749,6 +841,8 @@ public class Sender implements Runnable {
         String nodeId = Integer.toString(destination);
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0,
                 requestTimeoutMs, callback);
+        // TODO 将请求封装为InFlightRequest，并加入到InFlightRequests中
+        // TODO 将请求暂存到的Node节点关联的Channel中
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }

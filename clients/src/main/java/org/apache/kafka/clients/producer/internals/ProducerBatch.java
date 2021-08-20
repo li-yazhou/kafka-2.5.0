@@ -66,6 +66,7 @@ public final class ProducerBatch {
     private final List<Thunk> thunks = new ArrayList<>();
     private final MemoryRecordsBuilder recordsBuilder;
     private final AtomicInteger attempts = new AtomicInteger(0);
+    // TODO 标识ProducerBatch是否可以重复使用
     private final boolean isSplitBatch;
     private final AtomicReference<FinalState> finalState = new AtomicReference<>(null);
 
@@ -220,6 +221,7 @@ public final class ProducerBatch {
         produceFuture.set(baseOffset, logAppendTime, exception);
 
         // execute callbacks
+        // TODO 每个ProducerRecord对应一个CallBack，每个ProducerBatch包括多个ProducerRecord
         for (Thunk thunk : thunks) {
             try {
                 if (exception == null) {
@@ -235,6 +237,7 @@ public final class ProducerBatch {
             }
         }
 
+        // TODO send返回值的get方法被唤醒
         produceFuture.done();
     }
 

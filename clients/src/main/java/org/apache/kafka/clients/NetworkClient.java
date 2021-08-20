@@ -285,6 +285,7 @@ public class NetworkClient implements KafkaClient {
         if (node.isEmpty())
             throw new IllegalArgumentException("Cannot connect to empty node " + node);
 
+        // TODO
         if (isReady(node, now))
             return true;
 
@@ -480,6 +481,8 @@ public class NetworkClient implements KafkaClient {
             }
             // The call to build may also throw UnsupportedVersionException, if there are essential
             // fields that cannot be represented in the chosen version.
+            // TODO 构建InFlightRequest，并加入到InFlightRequests中，
+            // TODO 处理响应结果时需要InFlightRequest中的callback和ProducerBatch等数据
             doSend(clientRequest, isInternalRequest, now, builder.build(version));
         } catch (UnsupportedVersionException unsupportedVersionException) {
             // If the version is not supported, skip sending the request over the wire.
@@ -723,6 +726,7 @@ public class NetworkClient implements KafkaClient {
             requestHeader.apiKey().responseHeaderVersion(requestHeader.apiVersion()));
         // Always expect the response version id to be the same as the request version id
         Struct responseBody = requestHeader.apiKey().parseResponse(requestHeader.apiVersion(), responseBuffer);
+        // TODO 验证请求和响应是否匹配，不匹配则抛异常
         correlate(requestHeader, responseHeader);
         if (throttleTimeSensor != null && responseBody.hasField(CommonFields.THROTTLE_TIME_MS))
             throttleTimeSensor.record(responseBody.get(CommonFields.THROTTLE_TIME_MS), now);
@@ -801,6 +805,7 @@ public class NetworkClient implements KafkaClient {
         // if no response is expected then when the send is completed, return it
         for (Send send : this.selector.completedSends()) {
             InFlightRequest request = this.inFlightRequests.lastSent(send.destination());
+            // TODO acks=0时，不需要响应结果
             if (!request.expectResponse) {
                 this.inFlightRequests.completeLastSent(send.destination());
                 responses.add(request.completed(null, now));
@@ -836,6 +841,7 @@ public class NetworkClient implements KafkaClient {
         for (NetworkReceive receive : this.selector.completedReceives()) {
             String source = receive.source();
             InFlightRequest req = inFlightRequests.completeNext(source);
+            // TODO, 验证请求和响应不匹配则抛异常，请求无法被处理，将导致请求超时，然后发送失败或者执行重试
             Struct responseStruct = parseStructMaybeUpdateThrottleTimeMetrics(receive.payload(), req.header,
                 throttleTimeSensor, now);
             if (log.isTraceEnabled()) {

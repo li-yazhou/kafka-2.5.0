@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients;
 
+import org.apache.kafka.clients.producer.internals.Sender;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.requests.AbstractResponse;
@@ -27,7 +28,9 @@ import org.apache.kafka.common.requests.RequestHeader;
  */
 public class ClientResponse {
 
+    // TODO 包含correlationId，判断响应结果和请求是否匹配
     private final RequestHeader requestHeader;
+    // TODO 绑定response与ProducerBatch，{@link Sender#inFlightBatches}, handleProduceResponse(response, recordsByPartition, time.milliseconds());
     private final RequestCompletionHandler callback;
     private final String destination;
     private final long receivedTimeMs;

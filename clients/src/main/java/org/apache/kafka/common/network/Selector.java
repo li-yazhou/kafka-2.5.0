@@ -446,6 +446,14 @@ public class Selector implements Selectable, AutoCloseable {
             throw new IllegalArgumentException("timeout should be >= 0");
 
         boolean madeReadProgressLastCall = madeReadProgressLastPoll;
+        // TODO 清理动作
+        // TODO, 已经发送完成的请求，上一轮接收到的响应结果等
+        // TODO，如果请求顺序InFlightRequest与响应顺序不一致
+        // TODO，poll方法将抛出异常，下一轮poll时先清理上一轮的响应结果，则无法完成请求处理，
+        // TODO，最终，请求在sendProducerData方法中会被判断为超时，并调用CallBack方法完成消息生产请求
+        // TODO, 如果消息发送顺序是1、2、3、4、5，若得到响应顺序是 2、1、3、4、5，需要结合响应批次分析
+        // TODO, 如果同一批次接收到2、1、3、4、5，则5个生产请求都将生产超时
+        // TODO, 如果在一个批次中先接收响应2，则2生产失败，在另外一个批次中接收到1、3、4、5，2已经失败，InFlightRequest已经将2剔除，1、3、4、5与InFlightRequest顺序一致，则生产请求成功
         clear();
 
         boolean dataInBuffers = !keysWithBufferedRead.isEmpty();
@@ -466,6 +474,9 @@ public class Selector implements Selectable, AutoCloseable {
 
         /* check ready keys */
         long startSelect = time.nanoseconds();
+        // TODO Selector.select()阻塞的
+        // TODO 可以使用 Selector.wakeup() 的方法唤醒，
+        // TODO KafkaProducer.send()中调用的就是 Selector.wakeup()，使Sender线程从select阻塞方法返回，执行下一轮的runOnce方法
         int numReadyKeys = select(timeout);
         long endSelect = time.nanoseconds();
         this.sensors.selectTime.record(endSelect - startSelect, time.milliseconds());
@@ -577,6 +588,7 @@ public class Selector implements Selectable, AutoCloseable {
                 //previous completed receive then read from it
                 if (channel.ready() && (key.isReadable() || channel.hasBytesBuffered()) && !hasCompletedReceive(channel)
                         && !explicitlyMutedChannels.contains(channel)) {
+                    // TODO 读取响应，暂存响应结果到completedReceives
                     attemptRead(channel);
                 }
 
@@ -594,6 +606,7 @@ public class Selector implements Selectable, AutoCloseable {
 
                 long nowNanos = channelStartTimeNanos != 0 ? channelStartTimeNanos : currentTimeNanos;
                 try {
+                    // TODO 发送请求
                     attemptWrite(key, channel, nowNanos);
                 } catch (Exception e) {
                     sendFailed = true;

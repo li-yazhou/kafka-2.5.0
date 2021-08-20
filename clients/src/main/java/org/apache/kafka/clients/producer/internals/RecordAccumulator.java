@@ -168,6 +168,7 @@ public final class RecordAccumulator {
     }
 
     /**
+     * TODO 该方法有send()方法调用，send()根据返回结果RecordAppendResult判断是否唤醒Sender线程
      * Add a record to the accumulator, return the append result
      * <p>
      * The append result will contain the future metadata, and flag for whether the appended batch is full or a new batch is created
@@ -204,11 +205,14 @@ public final class RecordAccumulator {
             synchronized (dq) {
                 if (closed)
                     throw new KafkaException("Producer closed while send in progress");
+                // TODO 第一次将消息的添加RecordAccumulator中，若添加成功则返回，第一次tryAppend
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq, nowMs);
                 if (appendResult != null)
                     return appendResult;
             }
 
+            // TODO abortOnNewBatch = true时，若当前分区的ProducerBatch写满或者不存在时，直接返回
+            // TODO send()感知到分区的ProducerBatch新建，StickyPartitioner切换下一个分区
             // we don't have an in-progress record batch try to allocate a new batch
             if (abortOnNewBatch) {
                 // Return a result that will cause another call to append.
@@ -218,6 +222,8 @@ public final class RecordAccumulator {
             byte maxUsableMagic = apiVersions.maxUsableProduceMagic();
             int size = Math.max(this.batchSize, AbstractRecords.estimateSizeInBytesUpperBound(maxUsableMagic, compression, key, value, headers));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
+
+            // TODO KafkaProducer可能处于多线程环境中，多个线程同时申请空间
             buffer = free.allocate(size, maxTimeToBlock);
 
             // Update the current time in case the buffer allocation blocked above.
@@ -227,6 +233,11 @@ public final class RecordAccumulator {
                 if (closed)
                     throw new KafkaException("Producer closed while send in progress");
 
+                // TODO 双重tryAppend，防止Deque<ProducerBatch>中出现内存碎片。
+                // TODO 比如，如果线程1，申请成功内存，并将内存分配给ProducerBatch，ProducerBatch存放在Partition对应的Deque末尾
+                // TODO 此时线程2执行free.allocate()成功，也分配了内存空间，若将该内存分配给ProducerBatch也放在Partition对应的Deque末尾
+                // TODO 将导致倒数第二个的ProducerBatch不会被使用（因为tryAppend只向最后一个ProducerBatch中追加消息），出现内存碎片。
+                // TODO 对于此种情况，需要在finally中释放线程2申请到的buffer，直接使用线程1申请的ProducerBatch即可
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, headers, callback, dq, nowMs);
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
@@ -568,6 +579,7 @@ public final class RecordAccumulator {
             this.drainIndex = (this.drainIndex + 1) % parts.size();
 
             // Only proceed if the partition has no in-flight batches.
+            // TODO
             if (isMuted(tp, now))
                 continue;
 
@@ -643,6 +655,7 @@ public final class RecordAccumulator {
 
         Map<Integer, List<ProducerBatch>> batches = new HashMap<>();
         for (Node node : nodes) {
+            // TODO 如果分区静默，则不在获取该分区的ProducerBatch
             List<ProducerBatch> ready = drainBatchesForOneNode(cluster, node, maxSize, now);
             batches.put(node.id(), ready);
         }
@@ -679,6 +692,7 @@ public final class RecordAccumulator {
      * Deallocate the record batch
      */
     public void deallocate(ProducerBatch batch) {
+        // TODO 将ProducerBatch从incomplete集合中删除
         incomplete.remove(batch);
         // Only deallocate the batch if it is not a split batch because split batch are allocated outside the
         // buffer pool.

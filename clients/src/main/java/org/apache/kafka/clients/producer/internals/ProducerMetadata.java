@@ -116,6 +116,7 @@ public class ProducerMetadata extends Metadata {
     public synchronized void awaitUpdate(final int lastVersion, final long timeoutMs) throws InterruptedException {
         long currentTimeMs = time.milliseconds();
         long deadlineMs = currentTimeMs + timeoutMs < 0 ? Long.MAX_VALUE : currentTimeMs + timeoutMs;
+        // TODO 等待被唤醒
         time.waitObject(this, () -> {
             // Throw fatal exceptions, if there are any. Recoverable topic errors will be handled by the caller.
             maybeThrowFatalException();
@@ -128,6 +129,7 @@ public class ProducerMetadata extends Metadata {
 
     @Override
     public synchronized void update(int requestVersion, MetadataResponse response, boolean isPartialUpdate, long nowMs) {
+        // TODO updateVersion ++，更新元数据Cluster
         super.update(requestVersion, response, isPartialUpdate, nowMs);
 
         // Remove all topics in the response that are in the new topic set. Note that if an error was encountered for a
@@ -137,7 +139,7 @@ public class ProducerMetadata extends Metadata {
                 newTopics.remove(metadata.topic());
             }
         }
-
+        // TODO 唤醒 awaitUpdate，完成元数据更新，返回主线程的send方法
         notifyAll();
     }
 
