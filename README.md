@@ -1,5 +1,11 @@
 Apache Kafka
 =================
+
+### 源码阅读
+- [Kafka源码分析01-Kafka概述](docs/comment/01_Kafka概述.md)
+- [Kafka源码分析01-消息生产机制分析](docs/comment/02_消息生产机制分析.md)
+
+
 See our [web site](https://kafka.apache.org) for details on the project.
 
 You need to have [Java](http://www.oracle.com/technetwork/java/javase/downloads/index.html) installed.
