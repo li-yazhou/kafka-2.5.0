@@ -1012,9 +1012,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         if (cluster.invalidTopics().contains(topic))
             throw new InvalidTopicException(topic);
 
+        // TODO 将访问的topic加入到元数据topic列表中，若列表中不存在则将requestVersion++，表示需要更新元数据
         metadata.add(topic, nowMs);
 
         Integer partitionsCount = cluster.partitionCountForTopic(topic);
+        // TODO 本地元数据有效性判断
         // Return cached metadata if we have it, and if the record's partition is either undefined
         // or within the known partition range
         if (partitionsCount != null && (partition == null || partition < partitionsCount))
@@ -1034,9 +1036,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             metadata.add(topic, nowMs + elapsed);
             // TODO requestVersion ++，返回较小的updateVersion，当updateVersion >= requestVersion，则认为元数据更新成功
             int version = metadata.requestUpdateForTopic(topic);
+
+            // TODO 将Sender线程从poll()阻塞方法中唤醒，执行网络IO
             sender.wakeup();
             try {
-                // TODO 阻塞等待sender线程完成元数据更新，await方法一直处于等待状态，sender处理完元数据请求后，update更新updateVersion并唤醒该更新等待
+                // TODO 阻塞等待sender线程完成元数据更新，wait方法一直处于等待状态，带有超时时间
+                // TODO sender处理完元数据请求后，update更新updateVersion并唤醒该更新等待
                 metadata.awaitUpdate(version, remainingWaitMs);
             } catch (TimeoutException ex) {
                 // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs

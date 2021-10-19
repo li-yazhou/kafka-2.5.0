@@ -1008,6 +1008,7 @@ public class NetworkClient implements KafkaClient {
 
             long metadataTimeout = Math.max(timeToNextMetadataUpdate, waitForMetadataFetch);
             if (metadataTimeout > 0) {
+                // TODO 元数据在更新中且未超时，则不发送更新请求并直接返回超时时间
                 return metadataTimeout;
             }
 
@@ -1114,6 +1115,7 @@ public class NetworkClient implements KafkaClient {
                 Metadata.MetadataRequestAndVersion requestAndVersion = metadata.newMetadataRequestAndVersion(now);
                 MetadataRequest.Builder metadataRequest = requestAndVersion.requestBuilder;
                 log.debug("Sending metadata request {} to node {}", metadataRequest, node);
+                // TODO 发送元数据更新请求，是Kafka内部请求
                 sendInternalMetadataRequest(metadataRequest, nodeConnectionId, now);
                 inProgress = new InProgressData(requestAndVersion.requestVersion, requestAndVersion.isPartialUpdate);
                 return defaultRequestTimeoutMs;
